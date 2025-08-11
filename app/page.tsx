@@ -1603,7 +1603,57 @@ Tip: I automatically detect and install npm packages from your code imports (lik
       });
       
       if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
+        // Capture detailed error information for debugging
+        let errorDetails = {
+          status: response.status,
+          statusText: response.statusText,
+          url: response.url,
+          headers: Object.fromEntries(response.headers.entries())
+        };
+        
+        let errorBody = null;
+        try {
+          const responseText = await response.text();
+          if (responseText) {
+            try {
+              errorBody = JSON.parse(responseText);
+            } catch {
+              errorBody = responseText;
+            }
+          }
+        } catch (e) {
+          console.warn('[AI Generation] Could not read error response body:', e);
+        }
+        
+        // Log comprehensive error details to console
+        console.error('[AI Generation] HTTP Error Details:');
+        console.error('[AI Generation] - Status:', response.status, response.statusText);
+        console.error('[AI Generation] - URL:', response.url);
+        console.error('[AI Generation] - Headers:', errorDetails.headers);
+        console.error('[AI Generation] - Response Body:', errorBody);
+        console.error('[AI Generation] - Model:', aiModel);
+        console.error('[AI Generation] - Prompt:', message?.substring(0, 200) + '...');
+        console.error('[AI Generation] - Context Keys:', Object.keys(fullContext));
+        
+        // Create detailed error message
+        let detailedErrorMsg = `HTTP ${response.status}: ${response.statusText}`;
+        
+        if (errorBody) {
+          if (typeof errorBody === 'object' && errorBody.error) {
+            detailedErrorMsg += `\nError: ${errorBody.error}`;
+          } else if (typeof errorBody === 'string') {
+            detailedErrorMsg += `\nDetails: ${errorBody}`;
+          }
+        }
+        
+        // Add debugging context to error message
+        detailedErrorMsg += `\n\nDebugging Info:`;
+        detailedErrorMsg += `\nModel: ${aiModel}`;
+        detailedErrorMsg += `\nEndpoint: ${response.url}`;
+        detailedErrorMsg += `\nSandbox ID: ${fullContext.sandboxId || 'None'}`;
+        detailedErrorMsg += `\nRequest Type: ${conversationContext.appliedCode.length > 0 ? 'Edit' : 'Generation'}`;
+        
+        throw new Error(detailedErrorMsg);
       }
       
       const reader = response.body?.getReader();
@@ -2345,7 +2395,9 @@ Focus on the key sections and content, making it clean and modern while preservi
           );
         }
         
-        throw new Error(`Failed to generate recreation: ${generatedCode ? 'Code was empty' : 'No code received'}${explanation ? ` (${explanation})` : ''}`);
+        // Don't throw generic error - let detailed API errors show through
+        // The detailed error information should already be displayed in the chat from the streaming handlers
+        console.error(`[cloneWebsite] Code generation completed without usable results: ${generatedCode ? 'Code was empty' : 'No code received'}${explanation ? ` (${explanation})` : ''}`);
       }
       
     } catch (error: any) {
@@ -2752,7 +2804,9 @@ Focus on the key sections and content, making it clean and modern.`;
             }]
           }));
         } else {
-          throw new Error('Failed to generate recreation');
+          // Don't throw generic error - let detailed API errors show through
+          // The detailed error information should already be displayed in the chat from the streaming handlers
+          console.error(`[handleHomeScreenSubmit] Code generation completed without usable results`);
         }
         
         setUrlInput('');
