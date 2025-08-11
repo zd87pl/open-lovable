@@ -391,7 +391,7 @@ print('Waiting for server to be ready...')
           sandboxId,
           url: `https://${host}`,
           message: 'Sandbox created and Vite React app initialized'
-        })}\\n\\n`));
+        })}\n\n`));
         
       } catch (error) {
         console.error('[create-ai-sandbox] Error:', error);
@@ -401,7 +401,7 @@ print('Waiting for server to be ready...')
           type: 'error',
           error: error instanceof Error ? error.message : 'Failed to create sandbox',
           details: error instanceof Error ? error.stack : undefined
-        })}\\n\\n`));
+        })}\n\n`));
         
         // Clean up on error
         if (sandbox) {
