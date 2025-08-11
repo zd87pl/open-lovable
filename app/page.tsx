@@ -2268,7 +2268,7 @@ Focus on the key sections and content, making it clean and modern while preservi
         isEdit: prev.isEdit
       }));
       
-      if (generatedCode) {
+      if (generatedCode && generatedCode.trim().length > 0) {
         addChatMessage('AI recreation generated!', 'system');
         
         // Add the explanation to chat if available
@@ -2285,7 +2285,7 @@ Focus on the key sections and content, making it clean and modern while preservi
         await applyGeneratedCode(generatedCode, false);
         
         addChatMessage(
-          `Successfully recreated ${url} as a modern React app${homeContextInput ? ` with your requested context: "${homeContextInput}"` : ''}! The scraped content is now in my context, so you can ask me to modify specific sections or add features based on the original site.`, 
+          `Successfully recreated ${url} as a modern React app${homeContextInput ? ` with your requested context: "${homeContextInput}"` : ''}! The scraped content is now in my context, so you can ask me to modify specific sections or add features based on the original site.`,
           'ai',
           {
             scrapedUrl: url,
@@ -2318,7 +2318,34 @@ Focus on the key sections and content, making it clean and modern while preservi
           setActiveTab('preview');
         }, 1000); // Show completion briefly then switch
       } else {
-        throw new Error('Failed to generate recreation');
+        // Enhanced error reporting for debugging
+        console.error('[cloneWebsite] AI generation failed - debugging info:');
+        console.error('[cloneWebsite] - generatedCode length:', generatedCode?.length || 0);
+        console.error('[cloneWebsite] - generatedCode preview:', generatedCode?.substring(0, 200) || 'EMPTY');
+        console.error('[cloneWebsite] - explanation:', explanation || 'No explanation');
+        console.error('[cloneWebsite] - url:', url);
+        console.error('[cloneWebsite] - scrapeData success:', scrapeData?.success);
+        console.error('[cloneWebsite] - model:', aiModel);
+        
+        // Check if we received any streaming data at all
+        if (generationProgress.streamedCode.length > 0) {
+          console.error('[cloneWebsite] - Received streaming data but no final generatedCode');
+          console.error('[cloneWebsite] - streamedCode length:', generationProgress.streamedCode.length);
+          console.error('[cloneWebsite] - streamedCode preview:', generationProgress.streamedCode.substring(0, 300));
+          
+          addChatMessage(
+            `AI generation received ${generationProgress.streamedCode.length} characters but failed to complete properly. This might be a stream processing issue. Check the console for debugging details.`,
+            'system'
+          );
+        } else {
+          console.error('[cloneWebsite] - No streaming data received at all');
+          addChatMessage(
+            `AI generation failed to produce any output. This might be a model connectivity or prompt processing issue. Check the console for debugging details.`,
+            'system'
+          );
+        }
+        
+        throw new Error(`Failed to generate recreation: ${generatedCode ? 'Code was empty' : 'No code received'}${explanation ? ` (${explanation})` : ''}`);
       }
       
     } catch (error: any) {
