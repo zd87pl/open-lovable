@@ -28,7 +28,7 @@ export const appConfig = {
   // AI Model Configuration
   ai: {
     // Default AI model
-    defaultModel: 'moonshotai/kimi-k2-instruct',
+    defaultModel: 'anthropic/claude-sonnet-4-20250514',
     
     // Available models
     availableModels: [
