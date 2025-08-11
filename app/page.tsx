@@ -1481,17 +1481,16 @@ Tip: I automatically detect and install npm packages from your code imports (lik
       return;
     }
     
-    // Start sandbox creation in parallel if needed
-    let sandboxPromise: Promise<void> | null = null;
-    let sandboxCreating = false;
-    
+    // SEQUENTIAL: Create sandbox FIRST if needed, then start AI generation
     if (!sandboxData) {
-      sandboxCreating = true;
-      addChatMessage('Creating sandbox while I plan your app...', 'system');
-      sandboxPromise = createSandbox(true).catch((error: any) => {
+      addChatMessage('Creating sandbox first (required for AI generation)...', 'system');
+      try {
+        await createSandbox(true);
+        addChatMessage('✅ Sandbox ready! Starting AI generation...', 'system');
+      } catch (error: any) {
         addChatMessage(`Failed to create sandbox: ${error.message}`, 'system');
-        throw error;
-      });
+        return; // Don't proceed with AI generation if sandbox creation failed
+      }
     }
     
     // Determine if this is an edit
@@ -1522,13 +1521,13 @@ Tip: I automatically detect and install npm packages from your code imports (lik
       console.log('[chat] Using backend file cache for context');
       
       const fullContext = {
-        sandboxId: sandboxData?.sandboxId || (sandboxCreating ? 'pending' : null),
+        sandboxId: sandboxData?.sandboxId || null,
         structure: structureContent,
         recentMessages: chatMessages.slice(-20),
         conversationContext: conversationContext,
         currentCode: promptInput,
         sandboxUrl: sandboxData?.url,
-        sandboxCreating: sandboxCreating
+        sandboxCreating: false // Always false since sandbox is created sequentially before this point
       };
       
       // Debug what we're sending
@@ -1812,19 +1811,7 @@ Tip: I automatically detect and install npm packages from your code imports (lik
         // Don't show the Generated Code panel by default
         // setLeftPanelVisible(true);
         
-        // Wait for sandbox creation if it's still in progress
-        if (sandboxPromise) {
-          addChatMessage('Waiting for sandbox to be ready...', 'system');
-          try {
-            await sandboxPromise;
-            // Remove the waiting message
-            setChatMessages(prev => prev.filter(msg => msg.content !== 'Waiting for sandbox to be ready...'));
-          } catch {
-            addChatMessage('Sandbox creation failed. Cannot apply code.', 'system');
-            return;
-          }
-        }
-        
+        // Sandbox is guaranteed to be ready at this point since we created it sequentially
         if (sandboxData && generatedCode) {
           // Use isEdit flag that was determined at the start
           await applyGeneratedCode(generatedCode, isEdit);
@@ -2038,11 +2025,16 @@ Tip: I automatically detect and install npm packages from your code imports (lik
         currentProject: `Clone of ${url}`
       }));
       
-      // Start sandbox creation in parallel with code generation
-      let sandboxPromise: Promise<void> | null = null;
+      // SEQUENTIAL: Create sandbox FIRST if needed
       if (!sandboxData) {
-        addChatMessage('Creating sandbox while generating your React app...', 'system');
-        sandboxPromise = createSandbox(true);
+        addChatMessage('Creating sandbox first (required for code generation)...', 'system');
+        try {
+          await createSandbox(true);
+          addChatMessage('✅ Sandbox ready! Starting code generation...', 'system');
+        } catch (error: any) {
+          addChatMessage(`Failed to create sandbox: ${error.message}`, 'system');
+          throw error; // This will be caught by the outer try-catch
+        }
       }
       
       addChatMessage('Analyzing and generating React recreation...', 'system');
@@ -2232,19 +2224,7 @@ Focus on the key sections and content, making it clean and modern while preservi
         // Don't show the Generated Code panel by default
         // setLeftPanelVisible(true);
         
-        // Wait for sandbox creation if it's still in progress
-        if (sandboxPromise) {
-          addChatMessage('Waiting for sandbox to be ready...', 'system');
-          try {
-            await sandboxPromise;
-            // Remove the waiting message
-            setChatMessages(prev => prev.filter(msg => msg.content !== 'Waiting for sandbox to be ready...'));
-          } catch (error: any) {
-            addChatMessage('Sandbox creation failed. Cannot apply code.', 'system');
-            throw error;
-          }
-        }
-        
+        // Sandbox is guaranteed to be ready at this point since we created it sequentially
         // First application for cloned site should not be in edit mode
         await applyGeneratedCode(generatedCode, false);
         
@@ -2355,14 +2335,20 @@ Focus on the key sections and content, making it clean and modern while preservi
     const cleanUrl = displayUrl.replace(/^https?:\/\//i, '');
     addChatMessage(`Starting to clone ${cleanUrl}...`, 'system');
     
-    // Start creating sandbox and capturing screenshot immediately in parallel
-    const sandboxPromise = !sandboxData ? createSandbox(true) : Promise.resolve();
-    
-    // Only capture screenshot if we don't already have a sandbox (first generation)
-    // After sandbox is set up, skip the screenshot phase for faster generation
+    // SEQUENTIAL: Create sandbox FIRST if needed, then capture screenshot
     if (!sandboxData) {
-      captureUrlScreenshot(displayUrl);
+      addChatMessage('Creating sandbox first...', 'system');
+      try {
+        await createSandbox(true);
+        addChatMessage('✅ Sandbox ready! Capturing website screenshot...', 'system');
+      } catch (error: any) {
+        addChatMessage(`Failed to create sandbox: ${error.message}`, 'system');
+        return; // Exit early if sandbox creation fails
+      }
     }
+    
+    // Capture screenshot after sandbox is ready
+    captureUrlScreenshot(displayUrl);
     
     // Set loading stage immediately before hiding home screen
     setLoadingStage('gathering');
@@ -2373,9 +2359,7 @@ Focus on the key sections and content, making it clean and modern while preservi
       setShowHomeScreen(false);
       setHomeScreenFading(false);
       
-      // Wait for sandbox to be ready (if it's still creating)
-      await sandboxPromise;
-      
+      // Sandbox is guaranteed to be ready at this point since we created it sequentially
       // Now start the clone process which will stream the generation
       setUrlInput(homeUrlInput);
       setUrlOverlayVisible(false); // Make sure overlay is closed
