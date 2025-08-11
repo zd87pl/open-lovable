@@ -15,11 +15,11 @@ export const appConfig = {
     // Vite development server port
     vitePort: 5173,
     
-    // Time to wait for Vite to be ready (in milliseconds)
-    viteStartupDelay: 7000,
+    // Time to wait for Vite to be ready (in milliseconds) - reduced for faster API response
+    viteStartupDelay: 3000,
     
-    // Time to wait for CSS rebuild (in milliseconds)
-    cssRebuildDelay: 2000,
+    // Time to wait for CSS rebuild (in milliseconds) - reduced for faster API response
+    cssRebuildDelay: 1000,
     
     // Default sandbox template (if using templates)
     defaultTemplate: undefined, // or specify a template ID
