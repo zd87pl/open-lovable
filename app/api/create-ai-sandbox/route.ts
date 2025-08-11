@@ -11,7 +11,8 @@ declare global {
   var sandboxState: SandboxState;
 }
 
-export async function POST() {
+// EventSource uses GET requests, so we need to export GET instead of POST
+export async function GET() {
   let sandbox: any = null;
 
   // Check for required environment variable first
