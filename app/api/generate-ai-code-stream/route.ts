@@ -1361,6 +1361,12 @@ It's better to have 3 complete files than 10 incomplete files.`
           return;
         }
         
+        // Enhanced debugging: Track raw AI response
+        console.log('[AI-DEBUG] Starting enhanced response tracking...');
+        let totalResponseLength = 0;
+        let rawResponsePreview = '';
+        let chunkCount = 0;
+        
         // Stream the response and parse in real-time
         let generatedCode = '';
         let currentFile = '';
@@ -1378,6 +1384,13 @@ It's better to have 3 complete files than 10 incomplete files.`
           const text = textPart || '';
           generatedCode += text;
           currentFile += text;
+          
+          // Enhanced debugging: Track response details
+          totalResponseLength += text.length;
+          chunkCount++;
+          if (rawResponsePreview.length < 500) {
+            rawResponsePreview += text;
+          }
           
           // Combine with buffer for tag detection
           const searchText = tagBuffer + text;
@@ -1480,10 +1493,19 @@ It's better to have 3 complete files than 10 incomplete files.`
         
         console.log('\n\n[generate-ai-code-stream] Streaming complete.');
         
+        // Enhanced debugging: Log response statistics
+        console.log('[AI-DEBUG] Response Statistics:');
+        console.log('[AI-DEBUG] - Total chunks received:', chunkCount);
+        console.log('[AI-DEBUG] - Total response length:', totalResponseLength);
+        console.log('[AI-DEBUG] - Generated code length:', generatedCode.length);
+        console.log('[AI-DEBUG] - Raw response preview (first 500 chars):', rawResponsePreview);
+        console.log('[AI-DEBUG] - Response contains <file> tags:', generatedCode.includes('<file'));
+        console.log('[AI-DEBUG] - Response contains </file> tags:', generatedCode.includes('</file>'));
+        
         // Send any remaining conversational text
         if (conversationalBuffer.trim()) {
-          await sendProgress({ 
-            type: 'conversation', 
+          await sendProgress({
+            type: 'conversation',
             text: conversationalBuffer.trim()
           });
         }
@@ -1543,8 +1565,10 @@ It's better to have 3 complete files than 10 incomplete files.`
         const fileRegex = /<file path="([^"]+)">([\s\S]*?)<\/file>/g;
         const files = [];
         let match;
+        let matchCount = 0;
         
         while ((match = fileRegex.exec(generatedCode)) !== null) {
+          matchCount++;
           const filePath = match[1];
           const content = match[2].trim();
           files.push({ path: filePath, content });
@@ -1581,6 +1605,29 @@ It's better to have 3 complete files than 10 incomplete files.`
               path: filePath
             });
           }
+        }
+        
+        console.log(`[AI-DEBUG] File parsing complete. Found ${matchCount} matches, created ${files.length} files`);
+        
+        // Enhanced debugging: Detailed validation logging
+        console.log('[AI-DEBUG] Validation Check:');
+        console.log('[AI-DEBUG] - Files parsed:', files.length);
+        
+        if (files.length === 0) {
+          console.log('[AI-DEBUG] VALIDATION FAILURE: No files extracted');
+          console.log('[AI-DEBUG] - Generated code sample (first 1000 chars):');
+          console.log('[AI-DEBUG]', generatedCode.substring(0, 1000));
+          console.log('[AI-DEBUG] - Generated code sample (last 1000 chars):');
+          console.log('[AI-DEBUG]', generatedCode.substring(Math.max(0, generatedCode.length - 1000)));
+          console.log('[AI-DEBUG] - Searching for alternative file patterns:');
+          console.log('[AI-DEBUG] - <file> occurrences:', (generatedCode.match(/<file/g) || []).length);
+          console.log('[AI-DEBUG] - </file> occurrences:', (generatedCode.match(/<\/file>/g) || []).length);
+          console.log('[AI-DEBUG] - path= occurrences:', (generatedCode.match(/path=/g) || []).length);
+        } else {
+          console.log('[AI-DEBUG] VALIDATION SUCCESS: Files extracted successfully');
+          files.forEach((file, index) => {
+            console.log(`[AI-DEBUG] File ${index + 1}: ${file.path} (${file.content.length} chars)`);
+          });
         }
         
         // Extract explanation
@@ -1768,18 +1815,29 @@ Provide the complete file content without any truncation. Include all necessary 
           }
         }
         
+        // Enhanced debugging: Comprehensive validation logging before final check
+        console.log('[AI-DEBUG] Final Validation Before Completion:');
+        console.log('[AI-DEBUG] - Generated code empty:', !generatedCode || generatedCode.trim().length === 0);
+        console.log('[AI-DEBUG] - Generated code length:', generatedCode?.length || 0);
+        console.log('[AI-DEBUG] - Files array length:', files.length);
+        console.log('[AI-DEBUG] - File count from regex:', (generatedCode.match(/<file path="/g) || []).length);
+        console.log('[AI-DEBUG] - Component count:', componentCount);
+        console.log('[AI-DEBUG] - Packages to install:', packagesToInstall);
+        
         // Validate generatedCode before sending completion
         if (!generatedCode || generatedCode.trim().length === 0) {
           console.error('[generate-ai-code-stream] CRITICAL: Generated code is empty');
-          console.error('[generate-ai-code-stream] - files.length:', files.length);
-          console.error('[generate-ai-code-stream] - componentCount:', componentCount);
-          console.error('[generate-ai-code-stream] - explanation:', explanation?.substring(0, 100) || 'None');
-          console.error('[generate-ai-code-stream] - model:', model);
-          console.error('[generate-ai-code-stream] - packagesToInstall:', packagesToInstall);
+          console.error('[AI-DEBUG] FAILURE ANALYSIS:');
+          console.error('[AI-DEBUG] - Stream chunks received:', chunkCount);
+          console.error('[AI-DEBUG] - Total response length:', totalResponseLength);
+          console.error('[AI-DEBUG] - Raw response preview:', rawResponsePreview);
+          console.error('[AI-DEBUG] - Stream processing completed normally');
+          console.error('[AI-DEBUG] - Model used:', model);
+          console.error('[AI-DEBUG] - Provider:', isAnthropic ? 'anthropic' : (isOpenAI ? 'openai' : 'groq'));
           
           await sendProgress({
             type: 'error',
-            error: `Code generation failed: No code was generated by the AI model. This could be due to a model issue, prompt processing failure, or stream processing error.`
+            error: `Code generation failed: No code was generated by the AI model. Debug: ${chunkCount} chunks, ${totalResponseLength} chars received, but final content is empty.`
           });
           return;
         }
@@ -1788,12 +1846,17 @@ Provide the complete file content without any truncation. Include all necessary 
         const fileCount = (generatedCode.match(/<file path="/g) || []).length;
         if (fileCount === 0) {
           console.error('[generate-ai-code-stream] CRITICAL: Generated code contains no files');
-          console.error('[generate-ai-code-stream] - generatedCode length:', generatedCode.length);
-          console.error('[generate-ai-code-stream] - generatedCode preview:', generatedCode.substring(0, 300));
+          console.error('[AI-DEBUG] FILE EXTRACTION FAILURE ANALYSIS:');
+          console.error('[AI-DEBUG] - Generated code length:', generatedCode.length);
+          console.error('[AI-DEBUG] - File start tags found:', (generatedCode.match(/<file/g) || []).length);
+          console.error('[AI-DEBUG] - File end tags found:', (generatedCode.match(/<\/file>/g) || []).length);
+          console.error('[AI-DEBUG] - Path attributes found:', (generatedCode.match(/path=/g) || []).length);
+          console.error('[AI-DEBUG] - Generated code preview (first 500 chars):', generatedCode.substring(0, 500));
+          console.error('[AI-DEBUG] - Generated code preview (last 500 chars):', generatedCode.substring(Math.max(0, generatedCode.length - 500)));
           
           await sendProgress({
             type: 'error',
-            error: `Code generation failed: Generated content contains no file definitions. AI response: "${generatedCode.substring(0, 200)}..."`
+            error: `Code generation completed without usable results. No files could be extracted from the generated code. Debug: Response contains ${(generatedCode.match(/<file/g) || []).length} <file> tags but 0 valid file extractions.`
           });
           return;
         }
