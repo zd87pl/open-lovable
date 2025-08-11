@@ -14,55 +14,86 @@ declare global {
 export async function POST() {
   let sandbox: any = null;
 
-  try {
-    // Check for required environment variable first
-    if (!process.env.E2B_API_KEY) {
-      console.error('[create-ai-sandbox] E2B_API_KEY environment variable is not set');
-      return NextResponse.json(
-        {
-          error: 'E2B_API_KEY environment variable is not configured. Please set this in your deployment environment.',
-          details: 'The E2B API key is required to create sandboxes. Get yours at https://e2b.dev'
-        },
-        { status: 500 }
-      );
-    }
+  // Check for required environment variable first
+  if (!process.env.E2B_API_KEY) {
+    console.error('[create-ai-sandbox] E2B_API_KEY environment variable is not set');
+    return NextResponse.json(
+      {
+        error: 'E2B_API_KEY environment variable is not configured. Please set this in your deployment environment.',
+        details: 'The E2B API key is required to create sandboxes. Get yours at https://e2b.dev'
+      },
+      { status: 500 }
+    );
+  }
 
-    console.log('[create-ai-sandbox] Creating base sandbox...');
-    console.log('[create-ai-sandbox] E2B_API_KEY is configured');
-    
-    // Kill existing sandbox if any
-    if (global.activeSandbox) {
-      console.log('[create-ai-sandbox] Killing existing sandbox...');
+  // Create a streaming response to bypass WP Engine Atlas 30s timeout
+  const encoder = new TextEncoder();
+  
+  const stream = new ReadableStream({
+    async start(controller) {
       try {
-        await global.activeSandbox.kill();
-      } catch (e) {
-        console.error('Failed to close existing sandbox:', e);
-      }
-      global.activeSandbox = null;
-    }
+        console.log('[create-ai-sandbox] Starting streaming sandbox creation...');
+        console.log('[create-ai-sandbox] E2B_API_KEY is configured');
+        
+        // Send initial progress
+        controller.enqueue(encoder.encode(`data: ${JSON.stringify({
+          type: 'progress',
+          message: 'Starting sandbox creation...',
+          step: 'init'
+        })}\n\n`));
     
-    // Clear existing files tracking
-    if (global.existingFiles) {
-      global.existingFiles.clear();
-    } else {
-      global.existingFiles = new Set<string>();
-    }
+        // Kill existing sandbox if any
+        if (global.activeSandbox) {
+          controller.enqueue(encoder.encode(`data: ${JSON.stringify({
+            type: 'progress',
+            message: 'Cleaning up existing sandbox...',
+            step: 'cleanup'
+          })}\n\n`));
+          
+          console.log('[create-ai-sandbox] Killing existing sandbox...');
+          try {
+            await global.activeSandbox.kill();
+          } catch (e) {
+            console.error('Failed to close existing sandbox:', e);
+          }
+          global.activeSandbox = null;
+        }
+        
+        // Clear existing files tracking
+        if (global.existingFiles) {
+          global.existingFiles.clear();
+        } else {
+          global.existingFiles = new Set<string>();
+        }
 
-    // Create base sandbox - we'll set up Vite ourselves for full control
-    console.log(`[create-ai-sandbox] Creating base E2B sandbox with ${appConfig.e2b.timeoutMinutes} minute timeout...`);
-    sandbox = await Sandbox.create({ 
-      apiKey: process.env.E2B_API_KEY,
-      timeoutMs: appConfig.e2b.timeoutMs
-    });
-    
-    const sandboxId = (sandbox as any).sandboxId || Date.now().toString();
-    const host = (sandbox as any).getHost(appConfig.e2b.vitePort);
-    
-    console.log(`[create-ai-sandbox] Sandbox created: ${sandboxId}`);
-    console.log(`[create-ai-sandbox] Sandbox host: ${host}`);
+        controller.enqueue(encoder.encode(`data: ${JSON.stringify({
+          type: 'progress',
+          message: 'Creating E2B sandbox...',
+          step: 'sandbox'
+        })}\n\n`));
 
-    // Set up a basic Vite React app using Python to write files
-    console.log('[create-ai-sandbox] Setting up Vite React app...');
+        // Create base sandbox - we'll set up Vite ourselves for full control
+        console.log(`[create-ai-sandbox] Creating base E2B sandbox with ${appConfig.e2b.timeoutMinutes} minute timeout...`);
+        sandbox = await Sandbox.create({
+          apiKey: process.env.E2B_API_KEY,
+          timeoutMs: appConfig.e2b.timeoutMs
+        });
+    
+        const sandboxId = (sandbox as any).sandboxId || Date.now().toString();
+        const host = (sandbox as any).getHost(appConfig.e2b.vitePort);
+        
+        console.log(`[create-ai-sandbox] Sandbox created: ${sandboxId}`);
+        console.log(`[create-ai-sandbox] Sandbox host: ${host}`);
+
+        controller.enqueue(encoder.encode(`data: ${JSON.stringify({
+          type: 'progress',
+          message: 'Setting up React app files...',
+          step: 'setup',
+          sandboxId: sandboxId
+        })}\n\n`));
+
+        // Set up a basic Vite React app using Python to write files
+        console.log('[create-ai-sandbox] Setting up Vite React app...');
     
     // Write all files in a single Python script to avoid multiple executions
     const setupScript = `
@@ -238,12 +269,18 @@ print('✓ src/index.css')
 print('\\nAll files created successfully!')
 `;
 
-    // Execute the setup script
-    await sandbox.runCode(setupScript);
-    
-    // Install dependencies
-    console.log('[create-ai-sandbox] Installing dependencies...');
-    await sandbox.runCode(`
+        // Execute the setup script
+        await sandbox.runCode(setupScript);
+        
+        controller.enqueue(encoder.encode(`data: ${JSON.stringify({
+          type: 'progress',
+          message: 'Installing npm dependencies...',
+          step: 'install'
+        })}\n\n`));
+        
+        // Install dependencies
+        console.log('[create-ai-sandbox] Installing dependencies...');
+        await sandbox.runCode(`
 import subprocess
 import sys
 
@@ -261,10 +298,16 @@ else:
     print(f'⚠ Warning: npm install had issues: {result.stderr}')
     # Continue anyway as it might still work
     `);
-    
-    // Start Vite dev server
-    console.log('[create-ai-sandbox] Starting Vite dev server...');
-    await sandbox.runCode(`
+        
+        controller.enqueue(encoder.encode(`data: ${JSON.stringify({
+          type: 'progress',
+          message: 'Starting Vite dev server...',
+          step: 'vite'
+        })}\n\n`));
+        
+        // Start Vite dev server
+        console.log('[create-ai-sandbox] Starting Vite dev server...');
+        await sandbox.runCode(`
 import subprocess
 import os
 import time
@@ -289,90 +332,95 @@ process = subprocess.Popen(
 print(f'✓ Vite dev server started with PID: {process.pid}')
 print('Waiting for server to be ready...')
     `);
-    
-    // Wait for Vite to be fully ready
-    await new Promise(resolve => setTimeout(resolve, appConfig.e2b.viteStartupDelay));
-    
-    // Force Tailwind CSS to rebuild by touching the CSS file
-    await sandbox.runCode(`
-import os
-import time
+        
+        controller.enqueue(encoder.encode(`data: ${JSON.stringify({
+          type: 'progress',
+          message: 'Finalizing sandbox setup...',
+          step: 'finalize'
+        })}\n\n`));
+        
+        // Reduced wait time for faster API response
+        await new Promise(resolve => setTimeout(resolve, 3000)); // Reduced from 7s to 3s
+        
+        console.log('[create-ai-sandbox] Vite startup delay reduced for faster response');
 
-# Touch the CSS file to trigger rebuild
-css_file = '/home/user/app/src/index.css'
-if os.path.exists(css_file):
-    os.utime(css_file, None)
-    print('✓ Triggered CSS rebuild')
-    
-# Also ensure PostCSS processes it
-time.sleep(2)
-print('✓ Tailwind CSS should be loaded')
-    `);
-
-    // Store sandbox globally
-    global.activeSandbox = sandbox;
-    global.sandboxData = {
-      sandboxId,
-      url: `https://${host}`
-    };
-    
-    // Set extended timeout on the sandbox instance if method available
-    if (typeof sandbox.setTimeout === 'function') {
-      sandbox.setTimeout(appConfig.e2b.timeoutMs);
-      console.log(`[create-ai-sandbox] Set sandbox timeout to ${appConfig.e2b.timeoutMinutes} minutes`);
-    }
-    
-    // Initialize sandbox state
-    global.sandboxState = {
-      fileCache: {
-        files: {},
-        lastSync: Date.now(),
-        sandboxId
-      },
-      sandbox,
-      sandboxData: {
-        sandboxId,
-        url: `https://${host}`
+        // Store sandbox globally
+        global.activeSandbox = sandbox;
+        global.sandboxData = {
+          sandboxId,
+          url: `https://${host}`
+        };
+        
+        // Set extended timeout on the sandbox instance if method available
+        if (typeof sandbox.setTimeout === 'function') {
+          sandbox.setTimeout(appConfig.e2b.timeoutMs);
+          console.log(`[create-ai-sandbox] Set sandbox timeout to ${appConfig.e2b.timeoutMinutes} minutes`);
+        }
+        
+        // Initialize sandbox state
+        global.sandboxState = {
+          fileCache: {
+            files: {},
+            lastSync: Date.now(),
+            sandboxId
+          },
+          sandbox,
+          sandboxData: {
+            sandboxId,
+            url: `https://${host}`
+          }
+        };
+        
+        // Track initial files
+        global.existingFiles.add('src/App.jsx');
+        global.existingFiles.add('src/main.jsx');
+        global.existingFiles.add('src/index.css');
+        global.existingFiles.add('index.html');
+        global.existingFiles.add('package.json');
+        global.existingFiles.add('vite.config.js');
+        global.existingFiles.add('tailwind.config.js');
+        global.existingFiles.add('postcss.config.js');
+        
+        console.log('[create-ai-sandbox] Sandbox ready at:', `https://${host}`);
+        
+        // Send final success response
+        controller.enqueue(encoder.encode(`data: ${JSON.stringify({
+          type: 'complete',
+          success: true,
+          sandboxId,
+          url: `https://${host}`,
+          message: 'Sandbox created and Vite React app initialized'
+        })}\\n\\n`));
+        
+      } catch (error) {
+        console.error('[create-ai-sandbox] Error:', error);
+        
+        // Send error response
+        controller.enqueue(encoder.encode(`data: ${JSON.stringify({
+          type: 'error',
+          error: error instanceof Error ? error.message : 'Failed to create sandbox',
+          details: error instanceof Error ? error.stack : undefined
+        })}\\n\\n`));
+        
+        // Clean up on error
+        if (sandbox) {
+          try {
+            await sandbox.kill();
+          } catch (e) {
+            console.error('Failed to close sandbox on error:', e);
+          }
+        }
+      } finally {
+        controller.close();
       }
-    };
-    
-    // Track initial files
-    global.existingFiles.add('src/App.jsx');
-    global.existingFiles.add('src/main.jsx');
-    global.existingFiles.add('src/index.css');
-    global.existingFiles.add('index.html');
-    global.existingFiles.add('package.json');
-    global.existingFiles.add('vite.config.js');
-    global.existingFiles.add('tailwind.config.js');
-    global.existingFiles.add('postcss.config.js');
-    
-    console.log('[create-ai-sandbox] Sandbox ready at:', `https://${host}`);
-    
-    return NextResponse.json({
-      success: true,
-      sandboxId,
-      url: `https://${host}`,
-      message: 'Sandbox created and Vite React app initialized'
-    });
-
-  } catch (error) {
-    console.error('[create-ai-sandbox] Error:', error);
-    
-    // Clean up on error
-    if (sandbox) {
-      try {
-        await sandbox.kill();
-      } catch (e) {
-        console.error('Failed to close sandbox on error:', e);
-      }
     }
-    
-    return NextResponse.json(
-      { 
-        error: error instanceof Error ? error.message : 'Failed to create sandbox',
-        details: error instanceof Error ? error.stack : undefined
-      },
-      { status: 500 }
-    );
-  }
+  });
+
+  return new Response(stream, {
+    headers: {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache',
+      'Connection': 'keep-alive',
+    },
+  });
 }

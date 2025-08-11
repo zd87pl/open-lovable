@@ -363,84 +363,140 @@ function AISandboxPageContent() {
     setResponseArea([]);
     setScreenshotError(null);
     
-    try {
-      const response = await fetch('/api/create-ai-sandbox', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({})
-      });
+    return new Promise<void>((resolve, reject) => {
+      // Use EventSource for streaming SSE responses
+      const eventSource = new EventSource('/api/create-ai-sandbox');
       
-      const data = await response.json();
-      console.log('[createSandbox] Response data:', data);
+      // Set 5 minute timeout for sandbox creation
+      const timeout = setTimeout(() => {
+        console.log('[createSandbox] Timeout reached, closing EventSource');
+        eventSource.close();
+        setLoading(false);
+        updateStatus('Timeout creating sandbox', false);
+        log('Sandbox creation timed out after 5 minutes', 'error');
+        addChatMessage('Sandbox creation timed out. Please try again.', 'system');
+        reject(new Error('Sandbox creation timeout'));
+      }, 5 * 60 * 1000); // 5 minutes
       
-      if (data.success) {
-        setSandboxData(data);
-        updateStatus('Sandbox active', true);
-        log('Sandbox created successfully!');
-        log(`Sandbox ID: ${data.sandboxId}`);
-        log(`URL: ${data.url}`);
-        
-        // Update URL with sandbox ID
-        const newParams = new URLSearchParams(searchParams.toString());
-        newParams.set('sandbox', data.sandboxId);
-        newParams.set('model', aiModel);
-        router.push(`/?${newParams.toString()}`, { scroll: false });
-        
-        // Fade out loading background after sandbox loads
-        setTimeout(() => {
-          setShowLoadingBackground(false);
-        }, 3000);
-        
-        if (data.structure) {
-          displayStructure(data.structure);
-        }
-        
-        // Fetch sandbox files after creation
-        setTimeout(fetchSandboxFiles, 1000);
-        
-        // Restart Vite server to ensure it's running
-        setTimeout(async () => {
-          try {
-            console.log('[createSandbox] Ensuring Vite server is running...');
-            const restartResponse = await fetch('/api/restart-vite', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' }
-            });
-            
-            if (restartResponse.ok) {
-              const restartData = await restartResponse.json();
-              if (restartData.success) {
-                console.log('[createSandbox] Vite server started successfully');
-              }
-            }
-          } catch (error) {
-            console.error('[createSandbox] Error starting Vite server:', error);
-          }
-        }, 2000);
-        
-        // Only add welcome message if not coming from home screen
-        if (!fromHomeScreen) {
-          addChatMessage(`Sandbox created! ID: ${data.sandboxId}. I now have context of your sandbox and can help you build your app. Just ask me to create components and I'll automatically apply them!
+      eventSource.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data);
+          console.log('[createSandbox] SSE message:', data);
+          
+          switch (data.type) {
+            case 'progress':
+              updateStatus(data.message || 'Creating sandbox...', false);
+              log(data.message || 'Processing...', 'info');
+              break;
+              
+            case 'error':
+              clearTimeout(timeout);
+              eventSource.close();
+              console.error('[createSandbox] Error:', data.error);
+              updateStatus('Error', false);
+              log(`Failed to create sandbox: ${data.error}`, 'error');
+              addChatMessage(`Failed to create sandbox: ${data.error}`, 'system');
+              setLoading(false);
+              reject(new Error(data.error));
+              break;
+              
+            case 'complete':
+              clearTimeout(timeout);
+              eventSource.close();
+              console.log('[createSandbox] Completed:', data);
+              
+              if (data.success && data.sandboxId && data.url) {
+                const sandboxData = {
+                  sandboxId: data.sandboxId,
+                  url: data.url,
+                  success: true
+                };
+                
+                setSandboxData(sandboxData);
+                updateStatus('Sandbox active', true);
+                log('Sandbox created successfully!');
+                log(`Sandbox ID: ${data.sandboxId}`);
+                log(`URL: ${data.url}`);
+                
+                // Update URL with sandbox ID
+                const newParams = new URLSearchParams(searchParams.toString());
+                newParams.set('sandbox', data.sandboxId);
+                newParams.set('model', aiModel);
+                router.push(`/?${newParams.toString()}`, { scroll: false });
+                
+                // Fade out loading background after sandbox loads
+                setTimeout(() => {
+                  setShowLoadingBackground(false);
+                }, 3000);
+                
+                if (data.structure) {
+                  displayStructure(data.structure);
+                }
+                
+                // Fetch sandbox files after creation
+                setTimeout(fetchSandboxFiles, 1000);
+                
+                // Restart Vite server to ensure it's running
+                setTimeout(async () => {
+                  try {
+                    console.log('[createSandbox] Ensuring Vite server is running...');
+                    const restartResponse = await fetch('/api/restart-vite', {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' }
+                    });
+                    
+                    if (restartResponse.ok) {
+                      const restartData = await restartResponse.json();
+                      if (restartData.success) {
+                        console.log('[createSandbox] Vite server started successfully');
+                      }
+                    }
+                  } catch (error) {
+                    console.error('[createSandbox] Error starting Vite server:', error);
+                  }
+                }, 2000);
+                
+                // Only add welcome message if not coming from home screen
+                if (!fromHomeScreen) {
+                  addChatMessage(`Sandbox created! ID: ${data.sandboxId}. I now have context of your sandbox and can help you build your app. Just ask me to create components and I'll automatically apply them!
 
 Tip: I automatically detect and install npm packages from your code imports (like react-router-dom, axios, etc.)`, 'system');
-        }
-        
-        setTimeout(() => {
-          if (iframeRef.current) {
-            iframeRef.current.src = data.url;
+                }
+                
+                setTimeout(() => {
+                  if (iframeRef.current) {
+                    iframeRef.current.src = data.url;
+                  }
+                }, 100);
+                
+                setLoading(false);
+                resolve();
+              } else {
+                throw new Error(data.error || 'Sandbox creation failed');
+              }
+              break;
+              
+            default:
+              console.log('[createSandbox] Unknown SSE message type:', data.type);
+              break;
           }
-        }, 100);
-      } else {
-        throw new Error(data.error || 'Unknown error');
-      }
-    } catch (error: any) {
-      console.error('[createSandbox] Error:', error);
-      updateStatus('Error', false);
-      log(`Failed to create sandbox: ${error.message}`, 'error');
-      addChatMessage(`Failed to create sandbox: ${error.message}`, 'system');
-    } finally {
-      setLoading(false);
-    }
+        } catch (error) {
+          console.error('[createSandbox] Failed to parse SSE message:', error);
+          // Continue listening for other messages
+        }
+      };
+      
+      eventSource.onerror = (error) => {
+        console.error('[createSandbox] EventSource error:', error);
+        clearTimeout(timeout);
+        eventSource.close();
+        updateStatus('Connection error', false);
+        log('Connection error during sandbox creation', 'error');
+        addChatMessage('Connection error during sandbox creation. Please try again.', 'system');
+        setLoading(false);
+        reject(new Error('EventSource connection error'));
+      };
+    });
   };
 
   const displayStructure = (structure: any) => {
