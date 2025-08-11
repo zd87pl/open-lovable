@@ -69,10 +69,11 @@ declare global {
 
 export async function POST(request: NextRequest) {
   try {
-    const { prompt, model = 'openai/gpt-oss-20b', context, isEdit = false } = await request.json();
+    const { prompt, model = 'anthropic/claude-3-5-sonnet-20241022', context, isEdit = false } = await request.json();
     
     console.log('[generate-ai-code-stream] Received request:');
     console.log('[generate-ai-code-stream] - prompt:', prompt);
+    console.log('[generate-ai-code-stream] - model:', model);
     console.log('[generate-ai-code-stream] - isEdit:', isEdit);
     console.log('[generate-ai-code-stream] - context.sandboxId:', context?.sandboxId);
     console.log('[generate-ai-code-stream] - context.currentFiles:', context?.currentFiles ? Object.keys(context.currentFiles) : 'none');
@@ -1148,10 +1149,61 @@ CRITICAL: When files are provided in the context:
         
         // Determine which provider to use based on model
         const isAnthropic = model.startsWith('anthropic/');
-        const isOpenAI = model.startsWith('openai/gpt-5');
-        const modelProvider = isAnthropic ? anthropic : (isOpenAI ? openai : groq);
-        const actualModel = isAnthropic ? model.replace('anthropic/', '') : 
-                           (model === 'openai/gpt-5') ? 'gpt-5' : model;
+        const isOpenAI = model.startsWith('openai/');
+        const isGroq = model.startsWith('groq/') || (!isAnthropic && !isOpenAI);
+        
+        console.log('[generate-ai-code-stream] Model provider selection:');
+        console.log('[generate-ai-code-stream] - model:', model);
+        console.log('[generate-ai-code-stream] - isAnthropic:', isAnthropic);
+        console.log('[generate-ai-code-stream] - isOpenAI:', isOpenAI);
+        console.log('[generate-ai-code-stream] - isGroq:', isGroq);
+        
+        let modelProvider;
+        let actualModel;
+        
+        if (isAnthropic) {
+          modelProvider = anthropic;
+          actualModel = model.replace('anthropic/', '');
+        } else if (isOpenAI) {
+          modelProvider = openai;
+          actualModel = model.replace('openai/', '');
+        } else {
+          // Default to Groq for other models or unrecognized prefixes
+          modelProvider = groq;
+          actualModel = model.startsWith('groq/') ? model.replace('groq/', '') : model;
+        }
+        
+        console.log('[generate-ai-code-stream] Final model selection:');
+        console.log('[generate-ai-code-stream] - actualModel:', actualModel);
+        console.log('[generate-ai-code-stream] - provider:', isAnthropic ? 'anthropic' : (isOpenAI ? 'openai' : 'groq'));
+        
+        // Validate that we have the necessary API keys
+        if (isAnthropic && !process.env.ANTHROPIC_API_KEY) {
+          console.error('[generate-ai-code-stream] ANTHROPIC_API_KEY not configured');
+          await sendProgress({
+            type: 'error',
+            error: 'Anthropic API key not configured. Please check your environment variables.'
+          });
+          return;
+        }
+        
+        if (isOpenAI && !process.env.OPENAI_API_KEY) {
+          console.error('[generate-ai-code-stream] OPENAI_API_KEY not configured');
+          await sendProgress({
+            type: 'error',
+            error: 'OpenAI API key not configured. Please check your environment variables.'
+          });
+          return;
+        }
+        
+        if (isGroq && !process.env.GROQ_API_KEY) {
+          console.error('[generate-ai-code-stream] GROQ_API_KEY not configured');
+          await sendProgress({
+            type: 'error',
+            error: 'Groq API key not configured. Please check your environment variables.'
+          });
+          return;
+        }
         
         // Make streaming API call with appropriate provider
         const streamOptions: any = {
@@ -1223,12 +1275,12 @@ It's better to have 3 complete files than 10 incomplete files.`
         };
         
         // Add temperature for non-reasoning models
-        if (!model.startsWith('openai/gpt-5')) {
+        if (!model.includes('gpt-5')) {
           streamOptions.temperature = 0.7;
         }
         
         // Add reasoning effort for GPT-5 models
-        if (isOpenAI) {
+        if (isOpenAI && actualModel.includes('gpt-5')) {
           streamOptions.experimental_providerMetadata = {
             openai: {
               reasoningEffort: 'high'
