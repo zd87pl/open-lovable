@@ -15,7 +15,20 @@ export async function POST() {
   let sandbox: any = null;
 
   try {
+    // Check for required environment variable first
+    if (!process.env.E2B_API_KEY) {
+      console.error('[create-ai-sandbox] E2B_API_KEY environment variable is not set');
+      return NextResponse.json(
+        {
+          error: 'E2B_API_KEY environment variable is not configured. Please set this in your deployment environment.',
+          details: 'The E2B API key is required to create sandboxes. Get yours at https://e2b.dev'
+        },
+        { status: 500 }
+      );
+    }
+
     console.log('[create-ai-sandbox] Creating base sandbox...');
+    console.log('[create-ai-sandbox] E2B_API_KEY is configured');
     
     // Kill existing sandbox if any
     if (global.activeSandbox) {
