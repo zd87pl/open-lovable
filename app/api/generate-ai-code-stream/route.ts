@@ -68,8 +68,10 @@ declare global {
 }
 
 export async function POST(request: NextRequest) {
+  let requestData: any = {};
   try {
-    const { prompt, model = 'anthropic/claude-3-5-sonnet-20241022', context, isEdit = false } = await request.json();
+    requestData = await request.json();
+    const { prompt, model = 'anthropic/claude-3-5-sonnet-20241022', context, isEdit = false } = requestData;
     
     console.log('[generate-ai-code-stream] Received request:');
     console.log('[generate-ai-code-stream] - prompt:', prompt);
@@ -127,9 +129,19 @@ export async function POST(request: NextRequest) {
     }
     
     if (!prompt) {
-      return NextResponse.json({ 
-        success: false, 
-        error: 'Prompt is required' 
+      console.error('[generate-ai-code-stream] Validation Error: No prompt provided');
+      console.error('[generate-ai-code-stream] Request body:', { model, context, isEdit });
+      
+      return NextResponse.json({
+        success: false,
+        error: 'Prompt is required',
+        debug: {
+          timestamp: new Date().toISOString(),
+          model: model || 'Not provided',
+          hasContext: !!context,
+          isEdit: isEdit || false,
+          context: 'Input validation failed'
+        }
       }, { status: 400 });
     }
     
@@ -1179,28 +1191,53 @@ CRITICAL: When files are provided in the context:
         
         // Validate that we have the necessary API keys
         if (isAnthropic && !process.env.ANTHROPIC_API_KEY) {
+          const errorMsg = 'Anthropic API key not configured. Please check your environment variables.';
           console.error('[generate-ai-code-stream] ANTHROPIC_API_KEY not configured');
+          console.error('[generate-ai-code-stream] Model requested:', model);
+          console.error('[generate-ai-code-stream] Available env vars:', Object.keys(process.env).filter(k => k.includes('API')));
+          
           await sendProgress({
             type: 'error',
-            error: 'Anthropic API key not configured. Please check your environment variables.'
+            error: errorMsg,
+            debug: {
+              model,
+              provider: 'anthropic',
+              timestamp: new Date().toISOString()
+            }
           });
           return;
         }
         
         if (isOpenAI && !process.env.OPENAI_API_KEY) {
+          const errorMsg = 'OpenAI API key not configured. Please check your environment variables.';
           console.error('[generate-ai-code-stream] OPENAI_API_KEY not configured');
+          console.error('[generate-ai-code-stream] Model requested:', model);
+          
           await sendProgress({
             type: 'error',
-            error: 'OpenAI API key not configured. Please check your environment variables.'
+            error: errorMsg,
+            debug: {
+              model,
+              provider: 'openai',
+              timestamp: new Date().toISOString()
+            }
           });
           return;
         }
         
         if (isGroq && !process.env.GROQ_API_KEY) {
+          const errorMsg = 'Groq API key not configured. Please check your environment variables.';
           console.error('[generate-ai-code-stream] GROQ_API_KEY not configured');
+          console.error('[generate-ai-code-stream] Model requested:', model);
+          
           await sendProgress({
             type: 'error',
-            error: 'Groq API key not configured. Please check your environment variables.'
+            error: errorMsg,
+            debug: {
+              model,
+              provider: 'groq',
+              timestamp: new Date().toISOString()
+            }
           });
           return;
         }
@@ -1288,7 +1325,41 @@ It's better to have 3 complete files than 10 incomplete files.`
           };
         }
         
-        const result = await streamText(streamOptions);
+        console.log('[generate-ai-code-stream] Starting streamText with options:', {
+          model: streamOptions.model,
+          maxTokens: streamOptions.maxTokens,
+          temperature: streamOptions.temperature,
+          messagesCount: streamOptions.messages?.length,
+          provider: isAnthropic ? 'anthropic' : (isOpenAI ? 'openai' : 'groq')
+        });
+        
+        let result;
+        try {
+          result = await streamText(streamOptions);
+          console.log('[generate-ai-code-stream] streamText call successful, starting stream processing...');
+        } catch (streamError) {
+          console.error('[generate-ai-code-stream] streamText API call failed:', streamError);
+          console.error('[generate-ai-code-stream] Stream options used:', JSON.stringify({
+            model: streamOptions.model?.toString(),
+            provider: isAnthropic ? 'anthropic' : (isOpenAI ? 'openai' : 'groq'),
+            maxTokens: streamOptions.maxTokens,
+            temperature: streamOptions.temperature
+          }, null, 2));
+          
+          await sendProgress({
+            type: 'error',
+            error: `AI API call failed: ${(streamError as Error).message}`,
+            debug: {
+              provider: isAnthropic ? 'anthropic' : (isOpenAI ? 'openai' : 'groq'),
+              model: actualModel,
+              originalModel: model,
+              timestamp: new Date().toISOString(),
+              hasAPIKey: isAnthropic ? !!process.env.ANTHROPIC_API_KEY :
+                         (isOpenAI ? !!process.env.OPENAI_API_KEY : !!process.env.GROQ_API_KEY)
+            }
+          });
+          return;
+        }
         
         // Stream the response and parse in real-time
         let generatedCode = '';
@@ -1812,10 +1883,41 @@ Provide the complete file content without any truncation. Include all necessary 
     });
     
   } catch (error) {
-    console.error('[generate-ai-code-stream] Error:', error);
-    return NextResponse.json({ 
-      success: false, 
-      error: (error as Error).message 
+    const model = requestData?.model || 'Not provided';
+    const isEdit = requestData?.isEdit || false;
+    const context = requestData?.context;
+    
+    console.error('[generate-ai-code-stream] Fatal error occurred:', error);
+    console.error('[generate-ai-code-stream] Request context:', {
+      model: model,
+      isEdit: isEdit,
+      hasContext: !!context,
+      timestamp: new Date().toISOString(),
+      provider: model?.startsWith('anthropic/') ? 'anthropic' :
+                (model?.startsWith('openai/') ? 'openai' :
+                (model?.startsWith('groq/') ? 'groq' : 'unknown')),
+      hasAPIKeys: {
+        anthropic: !!process.env.ANTHROPIC_API_KEY,
+        openai: !!process.env.OPENAI_API_KEY,
+        groq: !!process.env.GROQ_API_KEY
+      }
+    });
+    
+    return NextResponse.json({
+      success: false,
+      error: (error as Error).message,
+      debug: {
+        timestamp: new Date().toISOString(),
+        model: model,
+        isEdit: isEdit,
+        hasContext: !!context,
+        provider: model?.startsWith('anthropic/') ? 'anthropic' :
+                  (model?.startsWith('openai/') ? 'openai' :
+                  (model?.startsWith('groq/') ? 'groq' : 'unknown')),
+        errorType: error instanceof Error ? error.constructor.name : typeof error,
+        stack: error instanceof Error ? error.stack : undefined,
+        context: 'Main error catch block - unexpected failure during AI generation'
+      }
     }, { status: 500 });
   }
 }
